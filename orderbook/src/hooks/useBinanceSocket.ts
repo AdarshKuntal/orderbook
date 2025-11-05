@@ -1,6 +1,10 @@
 'use client';
+
 import { useEffect, useRef, useCallback } from 'react';
 
+// ----------------------------
+// ✅ Type definitions
+// ----------------------------
 type AggTradeEvent = {
   e: 'aggTrade';
   E: number;
@@ -20,8 +24,8 @@ type DepthUpdateEvent = {
   s: string;
   U: number;
   u: number;
-  b: [string, string][];
-  a: [string, string][];
+  b: [string, string][]; // bids
+  a: [string, string][]; // asks
 };
 
 type Message = AggTradeEvent | DepthUpdateEvent | any;
@@ -34,84 +38,101 @@ export type UseBinanceSocketOptions = {
   depthInterval?: 100 | 250 | 500;
 };
 
-export function useBinanceSocket(opts: UseBinanceSocketOptions) {
-  const {
-    symbol = 'btcusdt',
-    onAggTrade,
-    onDepthUpdate,
-    combined = true,
-    depthInterval = 100,
-  } = opts;
-
+// ----------------------------
+// ✅ Hook implementation
+// ----------------------------
+export function useBinanceSocket({
+  symbol = 'btcusdt',
+  onAggTrade,
+  onDepthUpdate,
+  combined = true,
+  depthInterval = 100,
+}: UseBinanceSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(500);
   const closedByUser = useRef(false);
 
+  // Create connection URL
   const createUrl = useCallback(() => {
     const base = 'wss://stream.binance.com:9443';
     const s = symbol.toLowerCase();
+
     if (combined) {
       const streams = [`${s}@aggTrade`, `${s}@depth@${depthInterval}ms`].join('/');
       return `${base}/stream?streams=${streams}`;
-    } else {
-      return `${base}/ws/${s}@aggTrade`;
     }
+    return `${base}/ws/${s}@aggTrade`;
   }, [symbol, combined, depthInterval]);
 
+  // ----------------------------
+  // ✅ Connection logic
+  // ----------------------------
   useEffect(() => {
     closedByUser.current = false;
     let mounted = true;
 
-    function connect() {
+    const connect = () => {
       if (!mounted) return;
+
       const url = createUrl();
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
         backoffRef.current = 500;
-        console.info('[Binance WS] connected', url);
+        console.info('[Binance WS] ✅ Connected:', url);
       };
 
       ws.onmessage = (ev) => {
-        const raw = ev.data;
         try {
-          const parsed = JSON.parse(raw) as Message | { stream: string; data: any };
+          const parsed = JSON.parse(ev.data) as Message | { stream: string; data: any };
           const payload = 'stream' in parsed ? parsed.data : parsed;
-          if (!payload || !payload.e) return;
 
-          if (payload.e === 'aggTrade' && onAggTrade) {
-            onAggTrade(payload as AggTradeEvent);
-          } else if (payload.e === 'depthUpdate' && onDepthUpdate) {
-            onDepthUpdate(payload as DepthUpdateEvent);
+          if (!payload?.e) return;
+
+          switch (payload.e) {
+            case 'aggTrade':
+              onAggTrade?.(payload as AggTradeEvent);
+              break;
+            case 'depthUpdate':
+              onDepthUpdate?.(payload as DepthUpdateEvent);
+              break;
           }
         } catch (err) {
-          console.error('Malformed WS message', err);
+          console.error('[Binance WS] ❌ Malformed message:', err);
         }
       };
 
-      ws.onerror = (e) => {
-        console.error('Binance WS error:', e);
+      ws.onerror = (err) => {
+        console.error('[Binance WS] ⚠️ Error:', err);
       };
 
       ws.onclose = () => {
         wsRef.current = null;
         if (closedByUser.current || !mounted) return;
+
         const t = backoffRef.current;
+        console.warn(`[Binance WS] 🔁 Reconnecting in ${t} ms...`);
         backoffRef.current = Math.min(backoffRef.current * 1.8, 30000);
         setTimeout(connect, t);
       };
-    }
+    };
 
     connect();
+
     return () => {
       mounted = false;
       closedByUser.current = true;
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) wsRef.current.close();
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+      }
       wsRef.current = null;
     };
   }, [createUrl, onAggTrade, onDepthUpdate]);
 
+  // ----------------------------
+  // ✅ Expose close() for manual shutdown
+  // ----------------------------
   return {
     close: () => {
       closedByUser.current = true;

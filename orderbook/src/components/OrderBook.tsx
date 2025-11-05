@@ -1,15 +1,32 @@
 'use client';
+
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useBinanceSocket } from '../hooks/useBinanceSocket';
 import { applyDepthDelta, mapToSortedArray } from '../lib/orderbook';
 
-export default function OrderBook({ symbol = 'btcusdt' }: { symbol?: string }) {
+// ✅ Define proper types
+interface DepthDelta {
+  b?: [string, string][]; // bids: [price, quantity]
+  a?: [string, string][]; // asks: [price, quantity]
+}
+
+interface OrderRow {
+  price: number;
+  qty: number;
+  cum: number;
+}
+
+interface OrderBookProps {
+  symbol?: string;
+}
+
+export default function OrderBook({ symbol = 'btcusdt' }: OrderBookProps) {
   const bidsRef = useRef<Map<string, number>>(new Map());
   const asksRef = useRef<Map<string, number>>(new Map());
   const [version, setVersion] = useState(0);
   const [hoverPrice, setHoverPrice] = useState<number | null>(null);
 
-  // smooth rendering control
+  // ✅ Smooth rendering: debounce UI updates with requestAnimationFrame
   const pending = useRef(false);
   const scheduleRender = () => {
     if (pending.current) return;
@@ -20,41 +37,53 @@ export default function OrderBook({ symbol = 'btcusdt' }: { symbol?: string }) {
     });
   };
 
-  const onDepthUpdate = (d: any) => {
-    applyDepthDelta(bidsRef.current, d.b || []);
-    applyDepthDelta(asksRef.current, d.a || []);
+  // ✅ Called when new WebSocket depth data arrives
+  const onDepthUpdate = (d: DepthDelta | null) => {
+    if (!d) return;
+    applyDepthDelta(bidsRef.current, d.b ?? []);
+    applyDepthDelta(asksRef.current, d.a ?? []);
     scheduleRender();
   };
 
+  // ✅ Connect to Binance WebSocket
   const { close } = useBinanceSocket({
     symbol,
     onDepthUpdate,
     combined: true,
-    onAggTrade: undefined,
   });
 
+  // ✅ Clean up socket on unmount
   useEffect(() => {
-    return () => {
-      close();
-    };
+    return close;
   }, [close]);
 
-  const bids = useMemo(() => mapToSortedArray(bidsRef.current, 'bids', 25), [version]);
-  const asks = useMemo(() => mapToSortedArray(asksRef.current, 'asks', 25), [version]);
+  // ✅ Convert Maps → Sorted arrays (top 25 entries)
+  const bids: OrderRow[] = useMemo(
+    () => mapToSortedArray(bidsRef.current, 'bids', 25),
+    [version]
+  );
+  const asks: OrderRow[] = useMemo(
+    () => mapToSortedArray(asksRef.current, 'asks', 25),
+    [version]
+  );
 
-  const topBid = bids.length ? bids[0].price : 0;
-  const topAsk = asks.length ? asks[0].price : 0;
+  // ✅ Compute top levels and spread
+  const topBid = bids[0]?.price ?? 0;
+  const topAsk = asks[0]?.price ?? 0;
   const spread = topAsk && topBid ? topAsk - topBid : 0;
 
+  // ✅ Cumulative max values (for background bar width scaling)
   const maxBidCum = bids.length ? Math.max(...bids.map((r) => r.cum)) : 1;
   const maxAskCum = asks.length ? Math.max(...asks.map((r) => r.cum)) : 1;
 
   return (
     <div className="flex-1 bg-[#0d1117] p-4 rounded-2xl shadow-md border border-gray-700">
-      <h3 className="text-lg font-semibold mb-3 text-gray-200 tracking-wide">Order Book</h3>
+      <h3 className="text-lg font-semibold mb-3 text-gray-200 tracking-wide">
+        Order Book
+      </h3>
+
       <div className="flex gap-4 text-gray-300 font-mono">
-        
-        {/* Bids */}
+        {/* ===== BIDS ===== */}
         <div className="w-1/2">
           <div className="grid grid-cols-3 text-xs text-gray-400 mb-1">
             <div>Price (USDT)</div>
@@ -74,15 +103,12 @@ export default function OrderBook({ symbol = 'btcusdt' }: { symbol?: string }) {
                   onMouseLeave={() => setHoverPrice(null)}
                 >
                   <div
+                    className="absolute left-0 top-0 bottom-0 transition-[width] duration-200 ease-out"
                     style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
                       width: `${barWidth}%`,
-                      background: 'linear-gradient(to right, rgba(34,197,94,0.15), rgba(34,197,94,0.05))',
+                      background:
+                        'linear-gradient(to right, rgba(34,197,94,0.15), rgba(34,197,94,0.05))',
                       zIndex: 0,
-                      transition: 'width 0.2s ease-out',
                     }}
                   />
                   <div className="relative z-10 grid grid-cols-3">
@@ -96,17 +122,20 @@ export default function OrderBook({ symbol = 'btcusdt' }: { symbol?: string }) {
           </div>
         </div>
 
-        {/* Spread */}
+        {/* ===== SPREAD ===== */}
         <div className="w-1/6 text-center flex flex-col items-center justify-center">
           <div className="text-sm text-gray-400">Spread</div>
-          <div className="text-base font-semibold text-yellow-400 mt-1">{spread.toFixed(2)}</div>
+          <div className="text-base font-semibold text-yellow-400 mt-1">
+            {spread.toFixed(2)}
+          </div>
           <div className="text-xs text-gray-500 mt-2">
-            {topBid ? `Bid ${topBid.toFixed(2)}` : '-'}<br />
+            {topBid ? `Bid ${topBid.toFixed(2)}` : '-'}
+            <br />
             {topAsk ? `Ask ${topAsk.toFixed(2)}` : '-'}
           </div>
         </div>
 
-        {/* Asks */}
+        {/* ===== ASKS ===== */}
         <div className="w-1/2">
           <div className="grid grid-cols-3 text-xs text-gray-400 mb-1">
             <div>Price (USDT)</div>
@@ -126,15 +155,12 @@ export default function OrderBook({ symbol = 'btcusdt' }: { symbol?: string }) {
                   onMouseLeave={() => setHoverPrice(null)}
                 >
                   <div
+                    className="absolute right-0 top-0 bottom-0 transition-[width] duration-200 ease-out"
                     style={{
-                      position: 'absolute',
-                      right: 0,
-                      top: 0,
-                      bottom: 0,
                       width: `${barWidth}%`,
-                      background: 'linear-gradient(to left, rgba(239,68,68,0.15), rgba(239,68,68,0.05))',
+                      background:
+                        'linear-gradient(to left, rgba(239,68,68,0.15), rgba(239,68,68,0.05))',
                       zIndex: 0,
-                      transition: 'width 0.2s ease-out',
                     }}
                   />
                   <div className="relative z-10 grid grid-cols-3">
