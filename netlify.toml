@@ -6,6 +6,6 @@
   NODE_VERSION = "20"
 
 [[redirects]]
-  from = "/orderbook/*"
+  from = "/*"
   to = "/index.html"
   status = 200
