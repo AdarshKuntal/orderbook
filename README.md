@@ -28,5 +28,5 @@
 - `src/components/RecentTrades.tsx` - recent trades UI.
 
 ## Deploy
-Deploy to Vercel for a live demo.
+ https://adarshkorderbook.netlify.app/
 
